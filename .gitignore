@@ -1,0 +1,31 @@
+# --- Environment / secrets ---
+.env
+backend/.env
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# --- Database (generated locally, never commit real/demo data dumps) ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- ML artifacts (regenerate via ml/train.py rather than committing) ---
+backend/ml/saved_models/*.pkl
+
+# --- Node / React ---
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+.idea/

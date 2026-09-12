@@ -1,0 +1,107 @@
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e7f2fb;background:#061421;font-synthesis:none;text-rendering:optimizeLegibility}
+*{box-sizing:border-box}
+body{margin:0;min-width:320px;min-height:100vh}
+button,input,select{font:inherit}
+button{cursor:pointer}
+.leaflet-container{height:100%;width:100%;background:#dbeafe}
+
+/* Leaflet is visually rich, but it must always stay below the app chrome.
+   The sticky header/sidebar use high stacking contexts so map panes and
+   controls can never paint over navigation while the page is scrolled. */
+.flowstate-map,
+.leaflet-container {
+  position: relative;
+  z-index: 0 !important;
+}
+
+.flowstate-map .leaflet-pane,
+.flowstate-map .leaflet-control-container {
+  z-index: 1 !important;
+}
+
+.flowstate-map .leaflet-top,
+.flowstate-map .leaflet-bottom {
+  z-index: 2 !important;
+}
+
+/* Avoid a blank/partially painted map when its responsive card changes size. */
+.flowstate-map {
+  min-height: 0;
+  isolation: isolate;
+}
+
+.leaflet-control-zoom a{background:#071a29!important;color:#e7f2fb!important;border-color:#29465a!important}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#0a2031;color:#e7f2fb}
+.leaflet-popup-content{margin:12px 14px}
+.weather-overlay{background:radial-gradient(circle at 80% 10%,rgba(56,189,248,.10),transparent 32%),radial-gradient(circle at 20% 85%,rgba(14,165,233,.08),transparent 28%);mix-blend-mode:screen}
+.weather-overlay[data-weather="rain"]{background:repeating-linear-gradient(112deg,transparent 0,transparent 16px,rgba(125,211,252,.035) 17px,transparent 19px),radial-gradient(circle at 75% 10%,rgba(56,189,248,.14),transparent 34%)}
+.weather-overlay[data-weather="storm"]{background:radial-gradient(circle at 75% 12%,rgba(167,139,250,.16),transparent 30%),radial-gradient(circle at 20% 80%,rgba(59,130,246,.12),transparent 35%)}
+.weather-overlay[data-weather="clear"]{background:radial-gradient(circle at 78% 8%,rgba(251,191,36,.16),transparent 30%),radial-gradient(circle at 20% 80%,rgba(56,189,248,.07),transparent 30%)}
+
+
+/* System theme: the app follows the user's OS light/dark preference automatically. */
+html { color-scheme: dark light; }
+:root {
+  --fs-bg: #061421;
+  --fs-surface: #0a2031;
+  --fs-surface-2: #0d293c;
+  --fs-surface-3: #071a29;
+  --fs-border: #29465a;
+  --fs-text: #e7f2fb;
+  --fs-muted: #94a3b8;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --fs-bg: #f1f5f9;
+    --fs-surface: #ffffff;
+    --fs-surface-2: #f8fafc;
+    --fs-surface-3: #eef4f8;
+    --fs-border: #cbd5e1;
+    --fs-text: #0f172a;
+    --fs-muted: #64748b;
+  }
+
+  html, body { background: var(--fs-bg) !important; color: var(--fs-text) !important; }
+  body { color-scheme: light; }
+
+  /* Existing Tailwind dark palette is remapped for light system mode. */
+  [class*="bg-[#061421]"] { background-color: var(--fs-bg) !important; }
+  [class*="bg-[#071a29]"] { background-color: var(--fs-surface-3) !important; }
+  [class*="bg-[#0a2031]"] { background-color: var(--fs-surface) !important; }
+  [class*="bg-[#0d293c]"] { background-color: var(--fs-surface-2) !important; }
+
+  [class*="text-slate-100"],
+  [class*="text-slate-200"],
+  [class*="text-slate-300"] { color: #0f172a !important; }
+
+  [class*="text-slate-400"] { color: #475569 !important; }
+  [class*="text-slate-500"] { color: #64748b !important; }
+  [class*="text-slate-600"] { color: #94a3b8 !important; }
+
+  [class*="border-slate-700"] { border-color: var(--fs-border) !important; }
+  [class*="border-slate-600"] { border-color: #94a3b8 !important; }
+
+  [class*="bg-slate-800"] { background-color: #e2e8f0 !important; }
+  [class*="bg-slate-900"] { background-color: #cbd5e1 !important; }
+
+  input, select, textarea {
+    color: #0f172a !important;
+  }
+
+  .leaflet-control-zoom a {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  .leaflet-popup-content-wrapper,
+  .leaflet-popup-tip {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  .weather-overlay { mix-blend-mode: multiply; }
+}

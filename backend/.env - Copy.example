@@ -1,0 +1,39 @@
+# Copy this file to ".env" and fill in real values.
+# ".env" itself must NEVER be committed to git (see .gitignore).
+
+# Open-Meteo needs no API key — this is just the base endpoint.
+WEATHER_API_URL=https://api.open-meteo.com/v1/forecast
+
+# Optional: only needed if you plug in a real routing provider in
+# services/routing_service.py. Leave blank to use the built-in demo router.
+ROUTING_API_KEY=
+
+# SQLite for now. To move to PostgreSQL/PostGIS later, change this to e.g.
+# postgresql+psycopg2://user:password@localhost:5432/flood_nowcasting
+DATABASE_URL=sqlite:///flood_nowcasting.db
+
+# Used by Flask for session signing. Generate a real random value for
+# production, e.g.: python -c "import secrets; print(secrets.token_hex(32))"
+SECRET_KEY=dev-secret-key-change-me
+
+FLASK_ENV=development
+FLASK_DEBUG=True
+
+# Comma-separated list of frontend origins allowed to call this API.
+# Defaults (if left blank) cover local Vite (5173) and CRA (3000) dev
+# servers. In production, set this to your real deployed frontend URL,
+# e.g.: ALLOWED_ORIGINS=https://your-app.vercel.app
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+
+# Demo admin login (change these for any non-demo deployment)
+ADMIN_USERNAME=admin
+ADMIN_EMAIL=admin@admin.com
+ADMIN_PASSWORD=Admin@123
+
+# Refresh live weather/rain data frequently for the dashboard.
+WEATHER_CACHE_TTL_SECONDS=60
+
+# Weather grid/model controls
+WEATHER_CELL_SELECTION=nearest
+# Leave blank for Open-Meteo automatic best-match model
+WEATHER_MODEL=

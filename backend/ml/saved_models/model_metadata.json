@@ -1,0 +1,67 @@
+{
+  "trained_at": "2026-08-29T05:29:25.665619+00:00",
+  "feature_columns": [
+    "rainfall_30min",
+    "rainfall_1h",
+    "rainfall_3h",
+    "rainfall_6h",
+    "rainfall_intensity",
+    "cumulative_rainfall",
+    "runoff",
+    "drainage_capacity",
+    "drainage_utilization",
+    "blockage_percentage",
+    "elevation",
+    "slope",
+    "impervious_surface",
+    "historical_flood_frequency"
+  ],
+  "is_synthetic_dataset": true,
+  "dataset_path": "/home/claude/sih26085-flood-nowcasting/data/demo/synthetic_flood_history.csv",
+  "sample_count": 2000,
+  "test_accuracy": 0.63,
+  "classification_report": {
+    "0": {
+      "precision": 0.6339285714285714,
+      "recall": 0.6826923076923077,
+      "f1-score": 0.6574074074074074,
+      "support": 208.0
+    },
+    "1": {
+      "precision": 0.625,
+      "recall": 0.5729166666666666,
+      "f1-score": 0.5978260869565217,
+      "support": 192.0
+    },
+    "accuracy": 0.63,
+    "macro avg": {
+      "precision": 0.6294642857142857,
+      "recall": 0.6278044871794872,
+      "f1-score": 0.6276167471819646,
+      "support": 400.0
+    },
+    "weighted avg": {
+      "precision": 0.6296428571428572,
+      "recall": 0.63,
+      "f1-score": 0.6288083735909824,
+      "support": 400.0
+    }
+  },
+  "feature_importances": {
+    "rainfall_30min": 0.0755,
+    "rainfall_1h": 0.0731,
+    "rainfall_3h": 0.0635,
+    "rainfall_6h": 0.0616,
+    "rainfall_intensity": 0.0741,
+    "cumulative_rainfall": 0.0653,
+    "runoff": 0.0844,
+    "drainage_capacity": 0.0809,
+    "drainage_utilization": 0.1164,
+    "blockage_percentage": 0.0775,
+    "elevation": 0.0724,
+    "slope": 0.0696,
+    "impervious_surface": 0.0636,
+    "historical_flood_frequency": 0.0221
+  },
+  "notes": "Trained on a SYNTHETIC demo dataset (data/demo/synthetic_flood_history.csv). The accuracy figure above reflects how well this model recovers the synthetic generating rule, NOT real-world flood prediction accuracy. Do not present this as a validated flood model in a real deployment -- replace the dataset with real historical flood records and retrain first."
+}
