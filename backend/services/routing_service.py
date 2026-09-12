@@ -1,196 +1,235 @@
-"""Flood-aware road routing for FlowState.
-
-The service uses RouteSegment endpoints as a small road graph. When real
-OpenStreetMap segments are imported with scripts/import_osm.py, the same
-algorithm becomes a street-level graph over Gurugram roads. High/severe
-segments are removed for the safe route; Dijkstra then returns the shortest
-remaining path. If no connected graph is available, the service falls back
-to a clearly labelled straight-line estimate rather than inventing a route.
 """
-import heapq
-import json
+services/routing_service.py
+------------------------------
+Orchestrates the Safe Route Planner:
+1. (Optional) fetch a real base distance/time from OpenRouteService if
+   ROUTING_API_KEY is configured -- isolated to _fetch_real_route() below,
+   exactly as the spec requires ("clearly isolate it in a service module
+   and store the API key in .env"). Falls back to the demo straight-line
+   estimate on any failure, and ALWAYS labels which one was actually used.
+2. Figures out which zones the route passes near (by sampling points along
+   the path and finding each one's nearest zone), looks up each zone's
+   CURRENT flood risk (reusing services/nowcast_engine.py so this never
+   disagrees with /api/nowcast), and collects that zone's flagged
+   high-risk road segments as "avoided" in the safe-route alternative.
+3. Combines both into the normal-vs-safe comparison the API returns.
+
+Connects to:
+- flood_engine/routing.py    -> the actual distance/time/detour math
+- services/nowcast_engine.py -> current risk per zone along the path
+- models/zone.py, models/route_segment.py -> what gets queried
+- routes/route_routes.py     -> exposes this over HTTP
+"""
+
 import logging
-import math
-from collections import defaultdict
 
 import requests
 from flask import current_app
 
 from models import Zone, RouteSegment
-from services.nowcast_engine import get_cached_zone_nowcast
-from flood_engine.routing import haversine_distance_km, worst_risk
+from services.nowcast_engine import build_zone_nowcast
+from flood_engine.routing import (
+    haversine_distance_km,
+    estimate_road_distance_km,
+    estimate_travel_time_minutes,
+    worst_risk,
+    compute_safe_route,
+    build_route_explanation,
+)
 
 logger = logging.getLogger(__name__)
+
 REQUEST_TIMEOUT_SECONDS = 8
 ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions/driving-car"
-RISK_PENALTY = {"LOW": 0.0, "MODERATE": 0.20, "HIGH": 2.0, "SEVERE": 100.0}
 
 
-def _node_key(lat, lng):
-    # OSM-derived segments normally share exact node coordinates; quantising
-    # also makes hand/imported data robust to tiny floating point differences.
-    return (round(float(lat), 6), round(float(lng), 6))
+class RoutingServiceError(Exception):
+    """Raised when the real routing API call or response parsing fails."""
 
 
-def _build_graph(segments):
-    graph = defaultdict(list)
-    nodes = {}
-    for s in segments:
-        a = _node_key(s.start_lat, s.start_lng)
-        b = _node_key(s.end_lat, s.end_lng)
-        nodes[a] = (s.start_lat, s.start_lng)
-        nodes[b] = (s.end_lat, s.end_lng)
-        graph[a].append((b, s))
-        graph[b].append((a, s))
-    return graph, nodes
-
-
-def _nearest_node(nodes, lat, lng):
-    if not nodes:
-        return None
-    return min(nodes, key=lambda n: haversine_distance_km(lat, lng, n[0], n[1]))
-
-
-def _edge_cost(segment, mode, risk_override=None):
-    risk = (risk_override or getattr(segment, "risk_category", None) or "LOW").upper()
-    minutes = max(0.1, (segment.distance_km / 25.0) * 60.0)
-    if mode == "safe" and risk in ("HIGH", "SEVERE"):
-        return math.inf
-    if mode == "balanced":
-        return minutes * (1.0 + RISK_PENALTY.get(risk, 0.0))
-    return minutes
-
-
-def _dijkstra(segments, start_lat, start_lng, end_lat, end_lng, mode="normal", risk_by_id=None):
-    graph, nodes = _build_graph(segments)
-    start = _nearest_node(nodes, start_lat, start_lng)
-    goal = _nearest_node(nodes, end_lat, end_lng)
-    if start is None or goal is None:
-        return None
-    dist = {start: 0.0}
-    prev = {}
-    heap = [(0.0, start)]
-    while heap:
-        cost, node = heapq.heappop(heap)
-        if cost != dist.get(node):
-            continue
-        if node == goal:
-            break
-        for nxt, seg in graph[node]:
-            edge = _edge_cost(seg, mode, (risk_by_id or {}).get(seg.id))
-            if math.isinf(edge):
-                continue
-            new = cost + edge
-            if new < dist.get(nxt, math.inf):
-                dist[nxt] = new
-                prev[nxt] = (node, seg)
-                heapq.heappush(heap, (new, nxt))
-    if goal not in dist:
-        return None
-    nodes_path = [goal]
-    segments_path = []
-    cur = goal
-    while cur != start:
-        parent, seg = prev[cur]
-        nodes_path.append(parent)
-        segments_path.append(seg)
-        cur = parent
-    nodes_path.reverse(); segments_path.reverse()
-    return {
-        "segments": segments_path,
-        "coordinates": [[n[1], n[0]] for n in nodes_path],  # Leaflet [lat,lng]
-        "distance_km": round(sum(max(0.0, s.distance_km) for s in segments_path), 2),
-        "duration_minutes": round(sum((max(0.0, s.distance_km) / 25.0) * 60.0 for s in segments_path), 1),
-        "risk": worst_risk([(s.risk_category or "LOW").upper() for s in segments_path]),
-    }
-
-
-def _fetch_real_route(from_lat, from_lng, to_lat, to_lng):
+def _fetch_real_route(from_lat: float, from_lng: float, to_lat: float, to_lng: float) -> dict:
+    """Calls OpenRouteService for a real base distance/time. Isolated here
+    so this is the ONLY function that talks to an external routing
+    provider. Raises RoutingServiceError on any failure -- callers decide
+    whether to fall back to the demo estimate."""
     api_key = current_app.config.get("ROUTING_API_KEY")
     if not api_key:
-        raise RuntimeError("No ROUTING_API_KEY configured")
-    params = {"api_key": api_key, "start": f"{from_lng},{from_lat}", "end": f"{to_lng},{to_lat}"}
-    r = requests.get(ORS_DIRECTIONS_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
-    r.raise_for_status()
-    payload = r.json(); summary = payload["features"][0]["properties"]["summary"]
-    geometry = payload["features"][0].get("geometry")
-    coords = geometry.get("coordinates", []) if isinstance(geometry, dict) else []
-    return {"distance_km": round(summary["distance"] / 1000, 2), "duration_minutes": round(summary["duration"] / 60, 1), "source": "openrouteservice", "geometry": [[p[1],p[0]] for p in coords]}
+        raise RoutingServiceError("No ROUTING_API_KEY configured")
+
+    params = {
+        "api_key": api_key,
+        "start": f"{from_lng},{from_lat}",  # ORS wants lng,lat order
+        "end": f"{to_lng},{to_lat}",
+    }
+    try:
+        response = requests.get(ORS_DIRECTIONS_URL, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        raise RoutingServiceError(f"Routing API request failed: {exc}") from exc
+
+    try:
+        payload = response.json()
+        summary = payload["features"][0]["properties"]["summary"]
+        distance_km = round(summary["distance"] / 1000, 2)
+        duration_min = round(summary["duration"] / 60, 1)
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise RoutingServiceError(f"Unexpected routing API response shape: {exc}") from exc
+
+    return {"distance_km": distance_km, "duration_minutes": duration_min}
 
 
-def _segment_risks(offset_minutes=0):
-    """Return dynamic risk by segment ID without mutating ORM rows."""
-    zones = {z.id: z for z in Zone.query.all()}
-    risks = {}
-    for zone_id, zone in zones.items():
-        try:
-            forecast = get_cached_zone_nowcast(zone)["forecast"]
-            if forecast:
-                target = min(forecast, key=lambda step: abs((step.get("offset_minutes") or 0) - int(offset_minutes)))
-                risks[zone_id] = target["risk_category"]
-        except Exception:
-            continue
-    return risks
+def _get_base_route(from_lat: float, from_lng: float, to_lat: float, to_lng: float) -> dict:
+    """Returns {distance_km, duration_minutes, source}. Tries the real API
+    first (if configured), falls back to the demo straight-line estimate
+    on any failure -- and the "source" field always tells you honestly
+    which one produced the numbers you're looking at."""
+    try:
+        real = _fetch_real_route(from_lat, from_lng, to_lat, to_lng)
+        return {**real, "source": "openrouteservice"}
+    except RoutingServiceError as exc:
+        logger.info("Falling back to demo route estimate: %s", exc)
+        straight_km = haversine_distance_km(from_lat, from_lng, to_lat, to_lng)
+        distance_km = estimate_road_distance_km(straight_km)
+        duration_min = estimate_travel_time_minutes(distance_km)
+        return {"distance_km": distance_km, "duration_minutes": duration_min, "source": "demo_estimate"}
 
 
-def route_geojson(offset_minutes=0):
+def _find_nearest_zone(lat: float, lng: float, zones: list) -> Zone | None:
+    if not zones:
+        return None
+    return min(zones, key=lambda z: haversine_distance_km(lat, lng, z.latitude, z.longitude))
+
+
+def _sample_zones_along_path(from_lat, from_lng, to_lat, to_lng, num_samples: int = 5) -> list:
+    """Linearly interpolates points along the straight-line path and finds
+    each one's nearest zone -- a coarse proxy for "which zones does this
+    route pass through/near", since there's no real routable road graph
+    to trace (see flood_engine/routing.py docstring)."""
+    all_zones = Zone.query.all()
+    if not all_zones:
+        return []
+
+    seen_ids = set()
+    zones_along_path = []
+    for i in range(num_samples):
+        fraction = i / (num_samples - 1) if num_samples > 1 else 0
+        sample_lat = from_lat + (to_lat - from_lat) * fraction
+        sample_lng = from_lng + (to_lng - from_lng) * fraction
+        nearest = _find_nearest_zone(sample_lat, sample_lng, all_zones)
+        if nearest is not None and nearest.id not in seen_ids:
+            seen_ids.add(nearest.id)
+            zones_along_path.append(nearest)
+    return zones_along_path
+
+
+def get_road_segments_geojson(offset_minutes: int = 0) -> dict:
+    """Returns every seeded road segment as a GeoJSON FeatureCollection,
+    with each segment's risk_category computed LIVE from its own zone's
+    nowcast at the given time offset (0/30/60/90/120/150/180 minutes) --
+    NOT the static value written at seed time.
+
+    HONESTY NOTE: "street-level" here means each road inherits its parent
+    zone's predicted risk at that forecast step -- it is NOT an
+    independent per-street hydrology model. Real street-by-street
+    prediction would need per-street elevation and drainage data this
+    prototype doesn't have (see flood_engine/routing.py's module
+    docstring for the same limitation applied to routing).
+
+    Connects to:
+    - models/route_segment.py    -> the road geometry or this operates over
+    - services/nowcast_engine.py -> supplies each zone's time-varying risk
+    - routes/route_routes.py     -> exposes this over GET /api/routes/geojson
+    """
     segments = RouteSegment.query.all()
-    zone_risks = _segment_risks(offset_minutes)
+    if not segments:
+        return {"type": "FeatureCollection", "features": []}
+
+    zone_ids = {s.zone_id for s in segments}
+    zones_by_id = {z.id: z for z in Zone.query.filter(Zone.id.in_(zone_ids)).all()}
+
+    # One nowcast per zone (not per segment) -- several segments usually
+    # share a zone, no need to recompute its forecast for each of them.
+    risk_by_zone = {}
+    for zone_id, zone in zones_by_id.items():
+        forecast = build_zone_nowcast(zone)["forecast"]
+        closest_step = min(forecast, key=lambda step: abs(step["offset_minutes"] - offset_minutes))
+        risk_by_zone[zone_id] = closest_step["risk_category"]
+
     features = []
     for s in segments:
-        risk = (zone_risks.get(s.zone_id, s.risk_category) or "LOW").upper()
-        props = s.to_dict()
-        props["risk_category"] = risk
-        props["is_flood_prone"] = risk in ("HIGH", "SEVERE")
-        features.append({"type":"Feature","properties":props,"geometry":{"type":"LineString","coordinates":[[s.start_lng,s.start_lat],[s.end_lng,s.end_lat]]}})
-    return {"type":"FeatureCollection","features":features,"meta":{"source":"database+nowcast","street_level":True}}
+        risk = risk_by_zone.get(s.zone_id, s.risk_category)
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "LineString",
+                "coordinates": [[s.start_lng, s.start_lat], [s.end_lng, s.end_lat]],
+            },
+            "properties": {
+                "id": s.id,
+                "road_name": s.road_name,
+                "zone_id": s.zone_id,
+                "distance_km": s.distance_km,
+                "is_flood_prone": s.is_flood_prone,
+                "risk_category": risk,
+            },
+        })
+    return {"type": "FeatureCollection", "features": features}
 
 
-def _fallback_route(from_lat, from_lng, to_lat, to_lng):
-    straight = haversine_distance_km(from_lat, from_lng, to_lat, to_lng)
-    distance = round(straight * 1.35, 2)
-    duration = round(distance / 25.0 * 60.0, 1)
-    return {"distance_km":distance,"duration_minutes":duration,"source":"demo_estimate","geometry":[[from_lat,from_lng],[to_lat,to_lng]],"risk":"LOW"}
+def calculate_safe_route(
+    from_lat: float, from_lng: float, to_lat: float, to_lng: float,
+    from_label: str | None = None, to_label: str | None = None,
+) -> dict:
+    base = _get_base_route(from_lat, from_lng, to_lat, to_lng)
+    normal_distance_km = base["distance_km"]
+    normal_duration_min = base["duration_minutes"]
 
+    zones_along_path = _sample_zones_along_path(from_lat, from_lng, to_lat, to_lng)
+    zone_risks = {z.id: build_zone_nowcast(z)["forecast"][0]["risk_category"] for z in zones_along_path}
+    normal_risk = worst_risk(list(zone_risks.values()))
 
-def calculate_safe_route(from_lat, from_lng, to_lat, to_lng, from_label=None, to_label=None):
-    segments = RouteSegment.query.all()
-    zone_risks = _segment_risks(0)
-    risk_by_id = {s.id: (zone_risks.get(s.zone_id, s.risk_category) or "LOW").upper() for s in segments}
-    graph_available = len(segments) >= 2
-    normal_graph = _dijkstra(segments, from_lat, from_lng, to_lat, to_lng, "normal", risk_by_id) if graph_available else None
-    safe_graph = _dijkstra(segments, from_lat, from_lng, to_lat, to_lng, "safe", risk_by_id) if graph_available else None
-    balanced_graph = _dijkstra(segments, from_lat, from_lng, to_lat, to_lng, "balanced", risk_by_id) if graph_available else None
+    high_risk_zone_ids = [zid for zid, risk in zone_risks.items() if risk in ("HIGH", "SEVERE")]
 
-    if normal_graph:
-        normal = {**normal_graph, "source":"flowstate_road_graph"}
-    else:
-        try:
-            normal = _fetch_real_route(from_lat, from_lng, to_lat, to_lng)
-            normal["risk"] = "LOW"
-        except Exception:
-            normal = _fallback_route(from_lat, from_lng, to_lat, to_lng)
+    # "Avoided" segments: any segment seeded as flood-prone in a zone the
+    # route passes through, PLUS segments in any zone whose LIVE current
+    # risk is HIGH/SEVERE even if its seeded segment data said otherwise --
+    # keeps the avoided-segment list honest against the live nowcast, not
+    # just the static seed data.
+    zone_ids_along_path = [z.id for z in zones_along_path]
+    avoided_segments = []
+    if zone_ids_along_path:
+        candidates = RouteSegment.query.filter(RouteSegment.zone_id.in_(zone_ids_along_path)).all()
+        avoided_segments = [
+            s for s in candidates
+            if s.is_flood_prone or s.zone_id in high_risk_zone_ids
+        ]
 
-    safe = safe_graph
-    if safe:
-        safe = {**safe, "source":"flowstate_safe_dijkstra"}
-    else:
-        # No safe path: never pretend a risky route is safe.
-        safe = {"distance_km": normal["distance_km"], "duration_minutes": normal["duration_minutes"], "risk":"UNSAFE","source":"no_safe_path","geometry":normal.get("geometry",[]) }
+    num_avoided = len(avoided_segments)
+    safe_distance_km, safe_duration_min = compute_safe_route(normal_distance_km, normal_duration_min, num_avoided)
+    # The safe route still passes through any zone that WASN'T high-risk
+    # (that's the whole point -- only HIGH/SEVERE zones get detoured
+    # around). Its risk label must reflect whatever's left, not just
+    # assume "avoided something" means "now entirely LOW risk".
+    remaining_zone_risks = [risk for zid, risk in zone_risks.items() if zid not in high_risk_zone_ids]
+    safe_risk = worst_risk(remaining_zone_risks) if num_avoided > 0 else normal_risk
+    explanation = build_route_explanation(normal_distance_km, safe_distance_km, num_avoided)
 
-    balanced = {**balanced_graph, "source":"flowstate_balanced_dijkstra"} if balanced_graph else None
-    avoided = [s for s in (normal_graph["segments"] if normal_graph else []) if risk_by_id.get(s.id, (s.risk_category or "LOW")).upper() in ("HIGH","SEVERE")]
     return {
-        "from":{"latitude":from_lat,"longitude":from_lng,"label":from_label},
-        "to":{"latitude":to_lat,"longitude":to_lng,"label":to_label},
-        "normal_route":normal,
-        "safe_route":safe,
-        "balanced_route":balanced,
-        "avoided_segments":[s.to_dict() for s in avoided],
-        "zones_considered":sorted({s.zone_id for s in (normal_graph["segments"] if normal_graph else [])}),
-        "explanation": (
-            "Shortest route through currently safe road segments." if safe_graph else
-            "No fully safe connected route was found. The system does not label the normal route as safe."
-        ),
-        "street_level": bool(normal_graph),
+        "from": {"latitude": from_lat, "longitude": from_lng, "label": from_label},
+        "to": {"latitude": to_lat, "longitude": to_lng, "label": to_label},
+        "normal_route": {
+            "distance_km": normal_distance_km,
+            "duration_minutes": normal_duration_min,
+            "risk": normal_risk,
+            "source": base["source"],
+        },
+        "safe_route": {
+            "distance_km": safe_distance_km,
+            "duration_minutes": safe_duration_min,
+            "risk": safe_risk,
+            "source": "demo_detour_estimate" if num_avoided > 0 else base["source"],
+        },
+        "avoided_segments": [s.to_dict() for s in avoided_segments],
+        "zones_considered": [z.zone_code for z in zones_along_path],
+        "explanation": explanation,
     }
