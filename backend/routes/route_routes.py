@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
 from models import RouteSegment
-from services.routing_service import calculate_safe_route
+from services.routing_service import calculate_safe_route, get_road_segments_geojson
 
 route_bp = Blueprint("route", __name__)
 
@@ -34,11 +34,17 @@ def list_route_segments():
 
 
 @route_bp.route("/routes/geojson", methods=["GET"])
-def route_geojson_endpoint():
-    from services.routing_service import route_geojson
-    offset = request.args.get("offset_minutes", default=0, type=int)
-    offset = max(0, min(180, offset))
-    return jsonify({"data": route_geojson(offset), "meta": {"source": "computed", "street_level": True, "offset_minutes": offset}}), 200
+def get_routes_geojson():
+    """Street-level road segments with LIVE per-timestep risk, for the
+    Flood Map's road layer. ?offset_minutes=0/30/60/90/120/150/180 picks
+    which nowcast step to color roads by (defaults to 'now')."""
+    offset_minutes = request.args.get("offset_minutes", default=0, type=int)
+    geojson = get_road_segments_geojson(offset_minutes)
+
+    return jsonify({
+        "data": geojson,
+        "meta": {"source": "computed", "generated_at": datetime.now(timezone.utc).isoformat()},
+    }), 200
 
 
 @route_bp.route("/routes/safe", methods=["POST"])
