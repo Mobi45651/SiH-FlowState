@@ -35,7 +35,7 @@ demonstrates that coupling explicitly.
 ## 3. Architecture
 
 ```
-React Frontend (Vite + Tailwind + react-leaflet)
+React Frontend (Vite + react-leaflet)
         │  REST (JSON)
 Flask Backend
   ├─ routes/        (thin HTTP layer)
@@ -46,12 +46,6 @@ Flask Backend
         │
    SQLite (flood_nowcasting.db)
 ```
-
-Full architecture, ER diagram, and data-flow diagram were produced in
-Phase 1 of this build — see the chat history for the original document
-if you need the diagrams; this README is the condensed, current
-reference.
-
 ## 4. Technology Stack
 
 **Backend:** Python 3.10+, Flask, Flask-CORS, SQLAlchemy, SQLite, pandas,
@@ -167,8 +161,11 @@ Every response follows `{"data": ..., "meta": {"source": ..., "generated_at": ..
 
 ## 12. Flood Calculation Methodology
 
-Rational Method: `Q = 0.278 × C × I × A` (runoff m³/s, C = coefficient
-derived from impervious surface %, I = rainfall mm/hr, A = area km²).
+## 12. Flood Calculation Methodology
+
+Rational Method: `Q = 0.278 × C × I × A` (runoff m³/s, where `C` is the
+predefined runoff coefficient for the monitoring zone, `I` is rainfall
+mm/hr, and `A` is area km²).
 Drainage: `effective_capacity = normal_capacity × (1 − blockage%)`.
 Water depth accumulates stepwise across the 7 nowcast timesteps, rising
 when runoff exceeds capacity and receding otherwise. Full derivation and
@@ -189,8 +186,8 @@ alone (`flood_engine/risk.py`).
 
 `ml/explain.py` combines each factor's current severity with the
 trained model's global feature importance, ranks the seven factors
-(Rainfall, Drainage Load, Blockage, Elevation, Slope, Impervious Surface,
-History), and generates a plain-language explanation — always paired
+(Rainfall, Drainage Load, Blockage, Elevation, Slope,History)
+, and generates a plain-language explanation — always paired
 with a disclaimer that this is an approximation, not causal proof.
 
 ## 15. Drain Blockage Detection
@@ -238,7 +235,7 @@ in-memory SQLite fixture (`tests/conftest.py`).
   multi-city support.
 - Analytics page's historical-incident trend and ML performance metrics
   are illustrative placeholders (no backend endpoint for real historical
-  data yet) — clearly labeled in the UI, not hidden.
+  data yet).
 
 ## 20. Windows Quick Setup
 
