@@ -57,8 +57,8 @@ reference.
 **Backend:** Python 3.10+, Flask, Flask-CORS, SQLAlchemy, SQLite, pandas,
 NumPy, scikit-learn (Random Forest), requests, joblib.
 
-**Frontend:** React 19, Vite, Tailwind CSS v4, react-leaflet v5
-(Leaflet.js + OpenStreetMap tiles), recharts, lucide-react.
+**Frontend:** React 19, Vite, react-leaflet v5
+(Leaflet.js + OpenStreetMap tiles),  lucide-react.
 
 **External APIs:** Open-Meteo (weather, no key required), OpenRouteService
 (optional — routing falls back to an honest estimate without a key).
@@ -88,10 +88,7 @@ sih26085-flood-nowcasting/
 
 Prerequisites: Python 3.10+, Node.js 18+, Git.
 
-```bash
-git clone <your-repo>   # or unzip this project
-cd sih26085-flood-nowcasting
-```
+
 
 ## 7. Environment Setup
 
