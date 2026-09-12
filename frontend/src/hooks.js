@@ -129,6 +129,10 @@ export function useLocationWeather(location, intervalMs = 60000) {
 }
 
 export function useRouteGeoJSON(offsetMinutes = 0, intervalMs = 60000) {
-  const { data, loading, error } = usePolling(() => fetchRouteGeoJSON(offsetMinutes), [offsetMinutes], intervalMs);
-  return { roads: data || null, loading, error };
+  const { data, loading, error } = usePolling(
+    () => fetchRouteGeoJSON(offsetMinutes),
+    [offsetMinutes],
+    intervalMs,
+  );
+  return { roads: data, loading, error };
 }

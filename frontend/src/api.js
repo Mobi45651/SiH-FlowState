@@ -72,6 +72,7 @@ export const simulateDrainBlockage = (drainId, blockagePercent) =>
 
 // --- Safe route (Phase 8) ---
 export const fetchRouteSegments = (zoneId) => getJson(zoneId ? `/routes?zone_id=${zoneId}` : "/routes");
+export const fetchRouteGeoJSON = (offsetMinutes = 0) => getJson(`/routes/geojson?offset_minutes=${offsetMinutes}`);
 export const fetchSafeRoute = (fromLat, fromLng, toLat, toLng, fromLabel, toLabel) =>
   postJson("/routes/safe", {
     from_lat: fromLat, from_lng: fromLng, to_lat: toLat, to_lng: toLng,
@@ -89,7 +90,3 @@ export const runSimulation = (zoneId, rainfallMmPerHour, durationHours, drainage
     duration_hours: durationHours,
     drainage_blockage_percent: drainageBlockagePercent,
   });
-
-// Street-level road risk layer. This keeps the existing UI intact while
-// replacing zone-only map circles with actual road-segment data.
-export const fetchRouteGeoJSON = (offsetMinutes = 0) => getJson(`/routes/geojson?offset_minutes=${offsetMinutes}`);
